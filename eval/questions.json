@@ -1,0 +1,212 @@
+[
+  {
+    "q": "how do i get the id from the url",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/path-params.md",
+        "path-parameters"
+      ]
+    ]
+  },
+  {
+    "q": "how do i send json to my endpoint",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/body.md",
+        "request-body"
+      ],
+      [
+        "docs/tutorial/body.md",
+        "declare-it-as-a-parameter"
+      ]
+    ]
+  },
+  {
+    "q": "how do i make a url parameter optional",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/query-params.md",
+        "optional-parameters"
+      ]
+    ]
+  },
+  {
+    "q": "how do i return a 404 when the item doesnt exist",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/handling-errors.md",
+        "raise-an-httpexception-in-your-code"
+      ]
+    ]
+  },
+  {
+    "q": "my react app cant call my api the browser blocks it",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/cors.md",
+        "use-corsmiddleware"
+      ]
+    ]
+  },
+  {
+    "q": "how do i run the same check before every route",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/dependencies/global-dependencies.md",
+        "global-dependencies"
+      ]
+    ]
+  },
+  {
+    "q": "how do i change the status code of a response",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/response-status-code.md",
+        "changing-the-default"
+      ],
+      [
+        "docs/advanced/response-change-status-code.md",
+        "use-a-response-parameter"
+      ]
+    ]
+  },
+  {
+    "q": "what does Depends do",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/dependencies/index.md",
+        "what-is-dependency-injection"
+      ]
+    ]
+  },
+  {
+    "q": "what is UploadFile",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/request-files.md",
+        "uploadfile"
+      ]
+    ]
+  },
+  {
+    "q": "why am i getting a 422",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/path-params.md",
+        "data-validation"
+      ]
+    ]
+  },
+  {
+    "q": "how do i push live updates to the browser without polling",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/server-sent-events.md",
+        "what-are-server-sent-events"
+      ],
+      [
+        "docs/tutorial/server-sent-events.md",
+        "server-sent-events-sse"
+      ]
+    ]
+  },
+  {
+    "q": "how do i send results as they are ready instead of all at once",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/stream-json-lines.md",
+        "what-is-a-stream"
+      ],
+      [
+        "docs/advanced/stream-data.md",
+        "a-streamingresponse-with-yield"
+      ]
+    ]
+  },
+  {
+    "q": "how do i read data submitted from an html form",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/request-forms.md",
+        "form-data"
+      ]
+    ]
+  },
+  {
+    "q": "what is python-multipart for",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/request-forms.md",
+        "form-data"
+      ]
+    ]
+  },
+  {
+    "q": "how do i customise what an error response looks like",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/handling-errors.md",
+        "override-the-default-exception-handlers"
+      ],
+      [
+        "docs/tutorial/handling-errors.md",
+        "override-the-httpexception-error-handler"
+      ]
+    ]
+  },
+  {
+    "q": "what is APIRouter",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/tutorial/bigger-applications.md",
+        "another-module-with-apirouter"
+      ]
+    ]
+  },
+  {
+    "q": "what is lifespan",
+    "answerable": true,
+    "relevant_sections": [
+      [
+        "docs/advanced/events.md",
+        "lifespan-events"
+      ]
+    ]
+  },
+  {
+    "q": "how much does fastapi enterprise support cost",
+    "answerable": false
+  },
+  {
+    "q": "what is fastapis release schedule",
+    "answerable": false
+  },
+  {
+    "q": "how many requests per second can fastapi handle",
+    "answerable": false
+  },
+  {
+    "q": "does fastapi have a built in admin panel",
+    "answerable": false
+  },
+  {
+    "q": "who do i contact about a security vulnerability",
+    "answerable": false
+  }
+]
