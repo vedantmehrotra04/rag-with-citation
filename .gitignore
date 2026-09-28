@@ -1,4 +1,19 @@
-.env
+# Python
+_pycache_/
+*.py[cod]
+*.egg-info/
 .venv/
+
+# Secrets
+.env
+
+# Runtime state
+credits.json
+*.sqlite
+*.sqlite3
+
+# Build artefacts
 chroma/
-__pycache__/
+chroma_db/
+.pytest_cache/
+EOF

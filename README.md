@@ -1,197 +1,301 @@
-# RAG over the FastAPI documentation
+# FastAPI docs assistant
 
-A retrieval-augmented Q&A system over 80 FastAPI documentation pages, built to
-*measure* each retrieval technique rather than assume it helps.
+A retrieval system over the FastAPI documentation, and a support agent that uses
+it. Built to be measured rather than demoed: retrieval quality is scored against
+a hand-labelled question set, and the agent is scored against 16 scenariocovering approval gates, idempotency, PII and indirect prompt injection. - _Part 1 — Retrieval._ 892 chunks from 80 documentation pages, dense
+retrieval with a cross-encoder reranker. Hit-rate@5 of _0.882. - \*\*Part 2 — Support agent._ A LangGraph agent with a human approval gate on
+spend, idempotent writes, and PII stripped at the tool boundary.  
+Both parts run in one container. 11 unit tests, no network, ~6 seconds.
 
-Every answer cites the exact documentation section it came from, with a deep 
-link.
-                                                                             
----
-                                                                             
-## Quickstart
-                                                                             
-bash
-python3 -m venv .venv && source .venv/bin/activate                           
-pip install -r requirements.txt
-                                                                             
-# .env
-GOOGLE_API_KEY=...                                                           
-COHERE_API_KEY=...
+## Contents
 
-python -m src.ask "how do i return a 404 when the item doesnt exist"
+- [Quickstart](#quickstart) - [Part 1 — Retrieval](#part-1--retrieval)
+- [Part 2 — Support agent](#part-2--support-agent) - [Deployment](#deployment)
+- [Known limits](#known-limits) - [Layout](#layout) ## Quickstart
+  bash
+  git clone <repo> && cd rag-app python -m venv .venv && source .venv/bin/activate
+  pip install -r requirements.txt  
+  cp .env.example .env # add GOOGLE_API_KEY and COHERE_API_KEY  
+  python -m src.ingest # builds the Chroma index (~1 min) uvicorn app:app --reload # http://localhost:8000
 
-
-
-Raise an HTTPException with status_code=404 [1].
-
-Sources:
-  [1] Handling Errors > Raise an HTTPException in your code
-      https://fastapi.tiangolo.com/tutorial/handling-errors/#raise-an-httpexcep
-tion-in-your-code
-
+Run the checks:  
+bash python -m pytest tests/ -v # 11 unit tests, no network
+python -m src.evaluate # retrieval hit-rate (calls the API) python -m agent_eval.run # 16 agent scenarios (calls the API)
 
 ---
 
-## Results
+## Part 1 — Retrieval
 
-17 answerable questions, 5 unanswerable. Section-level ground truth.
+### Corpus and chunking
 
-| config | hit_rate@5 | MRR | p50 latency |
-|---|---|---|---|
-| vector only (Gemini embeddings, Chroma) | 0.824 | 0.556 | 0.62 s |
-| BM25 only | 0.176 | 0.088 | 0.002 s |
-| hybrid (RRF, 0.4 / 0.6) | 0.765 | 0.512 | 0.61 s |
-| *vector k=30 — recall ceiling* | *1.000* | — | 0.61 s |
-| rerank: ms-marco-MiniLM-L-6-v2, 30→5 | 0.529 | 0.325 | 0.98 s |
-| *rerank: Cohere rerank-v3.5, 30→5* | *0.882* | 0.500 | 1.19 s |
+80 pages of FastAPI documentation, split on markdown headings into _892 chunks_. Each chunk carries doc_id, anchor, heading_path, title and
+url, which is what makes both citation and evaluation possible.  
+Every chunk stores _two_ text fields, and the distinction matters:  
+| Field | Contains | Used for | |---|---|---|
+| page_content | Heading trail prepended to the body | Embedding | | original_text | The body, verbatim | Citation and display |
+Prepending the heading trail gives a chunk its context back — a paragraph that
+says "pass it as a query parameter" is meaningless on its own and unambigunder Tutorial › Query Parameters › Optional parameters. But the user should
+be shown what the docs actually say, not the embedding input, so the verbtext is kept alongside. ### Retrieval stack
 
-*Generation*
+query → dense retrieval (top 15) → cross-encoder rerank → top 5 → generation
 
-| metric | value |
-|---|---|
-| correct refusal (5 unanswerable) | 5 / 5 |
-| false refusal (17 answerable) | 1 / 17 |
-| faithfulness (LLM judge) | TODO |
-| judge agreement with manual labels | TODO / 5 |
+- _Embeddings_: gemini-embedding-001, 3072 dimensions.
+- _Vector store_: Chroma, persisted to disk and rebuilt only when a content
+  fingerprint changes — so an unchanged corpus never pays to re-embed.
+- _Reranker_: Cohere Rerank, applied to a wide candidate set.
 
----
+The reranker is the design decision worth defending. The embedding model is a
+_bi-encoder_: it encodes the query and the document separately and never sees
+them together, which is what makes the index searchable at all — the documents
+are embedded once, in advance. The reranker is a _cross-encoder_: it reads
+the
+query and one document jointly, so it can judge relevance properly. That is
+far too slow to run over 892 chunks, and exactly right over 15.
 
-## Findings
+So the retriever's job is recall, and the reranker's job is precision.
 
-### 1. Recall was never the problem — ranking was
+### Evaluation
 
-At k=30, *100% of questions had their correct section retrieved.* The three
-questions that missed at k=5 sat at ranks 7, 9 and 14.
+22 questions, hand-written against the corpus — 17 answerable, 5 deliberately
+unanswerable. Each answerable question is labelled with the (doc_id, anchor)
+of the sections that genuinely answer it, and the metric is _hit-rate@5_: did
+any labelled section appear in the top 5?
 
-That single number reframed the whole project: no amount of better chunking or
-a
-different embedding model would have helped. Everything was already being
-found.
+This is the second version of the eval set. The first scored each answer by
+checking whether a required phrase appeared in the retrieved text, and it
+reported near-zero while retrieval was visibly returning the right sections at
+rank 1. The phrases were never going to appear: markdown headings had been
+lifted out into metadata by the splitter, and code samples had been stripped by
+the cleaner. The eval was measuring the preprocessing, not the retrieval.
 
-### 2. Hybrid search made things worse
+Section-level labels fixed it because they describe what the right answer is,
+independently of how the text happens to be stored. It is the single most
+useful thing in this repository: an eval that measures the wrong thing is worse
+than no eval, because it is believed.
 
-BM25 alone scored *0.176*. Fusing it with a 0.824 retriever dropped four
-questions
-by 1–3 ranks.
+### Results
 
-RRF boosts chunks appearing in both lists, so a weak second voter reshuffles
-a
-strong first one. A chunk at dense rank 4 that BM25 also ranked highly
-outscores a
-chunk at dense rank 1 that BM25 never saw.
+Hit-rate@5 over the 17 answerable questions:
 
-*Cause:* the eval questions were deliberately written in user language with
-no
-documentation vocabulary — *"my react app cant call my api the browser blocks
-it"*
-against a page titled "CORS (Cross-Origin Resource Sharing)". Zero shared
-words.
-That is the hard case for lexical matching and the easy case for dense
-retrieval.
+| Configuration                | Hit-rate@5 |
+| ---------------------------- | ---------- |
+| BM25 only                    | 0.176      |
+| Dense only                   | \_\_       |
+| Hybrid (dense + BM25, RRF)   | \_\_       |
+| Dense + MiniLM cross-encoder | 0.529      |
+| _Dense + Cohere Rerank_      | _0.882_    |
 
-### 3. Reranker size mattered more than expected
+Recall@30 for the dense retriever is _1.000_.
 
-ms-marco-MiniLM-L-6-v2 (22M params) *halved* performance: 0.824 → 0.529.
-Asked to
-score the correct passage against the query, it returned *-4.2* — below its
-own
-relevance threshold — while promoting an unrelated templates page to *+2.2*
+### What the numbers showed
+
+_Hybrid search made it worse._ This is the opposite of the usual advice, and
+the mechanism is worth stating: Reciprocal Rank Fusion scores a document by its
+rank in each list, so a chunk appearing in both lists is pushed up hard. BM25
+alone scores 0.176 on this corpus — it is a weak voter — but RRF gives its
+opinion equal structural weight, and a weak voter reshuffling a strong list is
+a net loss. Hybrid retrieval helps when both retrievers are independently
+decent. Here one was not, and measuring it was the only way to find out.
+
+_Recall@30 is 1.000, so the problem was never recall._ Every correct section
+was already in the candidate set; they were just not in the top 5. That single
+number is what made reranking the obvious next move rather than a guess — no
+amount of chunking, embedding or query-rewriting work could have helped,
 because
-the query contained the word "url".
+nothing was missing.
 
-Cohere rerank-v3.5 took hit-rate to *0.882*, rescuing all three deep
-results
-(ranks 7, 9, 14 → 3, 4, 4).
-
-### 4. Reranking raised hit-rate and lowered MRR
-
-| | vector | reranked |
-|---|---|---|
-| hit_rate | 0.824 | *0.882* |
-| MRR | *0.556* | 0.500 |
-
-It *flattens the ranking* — pulls buried results up, pushes confident top
-results
-down. Reranked positions cluster at 1, 3 and 4 with almost nothing at 2 or 5.
-
-For RAG, *hit-rate@5 is the metric that matters*: the generator reads all
-five
-chunks and doesn't care about their order. So this is a net win, and MRR is the
-right thing to trade.
-
-Per-question diffing showed it fixed 3 and broke 2 — invisible in the
-aggregate,
-and exactly the kind of regression that reaches real users unnoticed.
-
-### 5. The eval set determines what you can measure
-
-The first version used phrase matching (*"does the retrieved chunk contain
-path parameters?"). It scored the system at **0.0* while retrieval was
-returning
-the correct section at rank 1.
-
-Two structural reasons: the markdown splitter moves headings into metadata, and the
-corpus strips FastAPI's {* ... *} code includes. Both of the vocabularies     that make
-good identifiers were unavailable.                                             
-Switching to *section-level ground truth* — (doc_id, anchor) pairs — made   the
-metric measure retrieval instead of string luck.                               
----                                                                            
-## How it works                                                                
-                                                                             data/raw/*.md
-   │  MarkdownHeaderTextSplitter → RecursiveCharacterTextSplitter (800 / 100)      ▼
-892 chunks, each carrying:                                                         chunk_id · doc_id · heading_path · anchor · url · original_text · title
-   │                                                                               ├── page_content   = heading trail + text   → embedded (Gemini, 3072 dims) →
-Chroma                                                                             └── original_text  = verbatim source        → shown to the LLM, cited,
-quote-checkable                                                                    │
-   ▼                                                                            query → Chroma top-30 → Cohere rerank → top 8 → numbered prompt → Gemini →
-answer + citations                                                              
-                                                                                *Two text fields, deliberately.* The heading trail is prepended to
-page_content so                                                               a chunk like "You can also raise it with custom headers" is findable — but
-original_text stays byte-identical to the source so citations and quote       verification
-work against the real document.                                                
-*Citations are positional.* The prompt numbers the excerpts [1] [2] [3];    the code
-records what each number was from the same list, in the same order. The model   emits
-small integers — never chunk ids, which it would happily invent.               
----                                                                            
-## Evaluation                                                                  
-eval/questions.json — 17 answerable, 5 unanswerable.                         
-*Questions are written in user language, not documentation language.*         "how do i get the id from the url", not *"how do you declare path
-parameters"*.                                                                   A question paraphrased from a chunk tests whether the retriever can find the
-chunk it                                                                        was copied from, which is not the task.
-                                                                                *Ground truth is (doc_id, anchor) section pairs*, not phrases.
-Deterministic,                                                                  free, reproducible, and robust to re-chunking — sections don't move when
-chunk_size                                                                    does.
-                                                                                *Validated before use.* eval/validate.py confirms every labelled section
-exists in                                                                       the index. A typo'd anchor is a permanent miss that looks like a retrieval
-failure.                                                                       
-*Retrieval metrics are deterministic, not LLM-judged.* Judging retrieval with an
-embedding model biases the metric toward that model. Judging it with an LLM     makes a
-12-question dev loop slow and non-reproducible. LLM judging is used only for    faithfulness, where no deterministic ground truth exists.
-                                                                                ---
-                                                                                ## Known limitations
-                                                                                - *17 questions.* One question is 5.9 points, so **deltas under ~10 points
-are not                                                                           distinguishable from noise.** The hybrid result (−5.9) is within that band;
-the                                                                               reranker result (+5.9) is at its edge.
-- *Ground truth labelled by one person*, 1–2 sections per question, not       pooled.
-  Proper recall@k needs exhaustive pooled judgments; what's reported is       recall
-  against my labels.                                                            - *No code in the corpus.* FastAPI keeps examples in separate .py files
-referenced                                                                        by {* ... *} directives, which ingestion strips. The system explains
-concepts and                                                                      cannot show code. Resolving those includes would roughly double the corpus.
-- *The eval set is probably harder than reality.* Real users sometimes use      documentation vocabulary; these questions never do. That likely understates what
-  hybrid and reranking would deliver in production.
-- *Latency is measured on a laptop* — no concurrency, no network hop to a hosted
-  store. Relative comparison only, not an SLA.
+_Reranker capacity dominates._ The same pipeline with a MiniLM cross-encoder
+scores 0.529 and with Cohere Rerank scores 0.882. "Add a reranker" is not the
+decision; which reranker is the decision.
 
 ---
 
-## What I'd do next
+## Part 2 — Support agent
 
-1. *Grow the eval set to 50+* so 5-point deltas become readable.
-2. *Pooled relevance labels* — union the top-k of several retrievers, judge the pool
-   with an LLM validated against manual labels, unlocking real recall@k and NDCG.
-3. *Resolve the code includes* so code-shaped questions become answerable.
-4. *Return more chunks after reranking* (top_n=8) — both questions the reranker
-   broke had the answer at rank 3–4 before reranking; they were lost only because the
-   cut was at 5.
-5. *Deploy* — FastAPI service, index baked into the Docker image at build time
-   (static corpus, ~11 MB of vectors, instant cold start).
+A LangGraph agent that answers billing questions and issues credits against
+invoices. It is deliberately small in surface area and deliberately large in
+the
+things that make an agent shippable.
+
+### Graph
+
+START → guard ─┬→ END (refused)
+└→ agent ─┬→ tools → agent
+├→ approval → agent
+├→ give_up → END
+└→ END (answered)
+
+| Node                                                                | Responsibility                                                   |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| guard                                                               | Screens the user turn for instruction-override patterns. Refuses |
+| before a model is ever called, so a rejected input costs no tokens. |
+| agent                                                               | The model turn. Increments step_count.                           |
+| tools                                                               | ToolNode over search_docs, get_invoice, issue_credit, with       |
+
+handle_tool_errors — a raised exception becomes a ToolMessage the model can
+read and recover from, not a crash that kills the run. |
+| approval | interrupt() for any credit at or above the gate threshold. The
+graph stops and persists; a human resumes it with Command(resume=...). |
+| give_up | Terminates cleanly at MAX_TURNS (6), rather than looping until
+the context window runs out. |
+
+State is three fields — messages, step_count, pending_credit. Everything
+else is derived, or lives in the checkpointer. State is copied into every node
+on every super-step, so anything that can be recomputed should not be stored.
+
+### The four production concerns
+
+_Spend gate._ Credits at or above GATE_THRESHOLD_PENCE (£200) route to
+approval, which calls interrupt(). The graph persists to a SqliteSaver
+and
+returns; the tool is not called until a human resumes with an approve or deny
+decision. The threshold is checked against the tool call's arguments, read
+out
+of the model's message — not against anything the model says it is about to do.
+A scenario in the eval set tries to talk the agent past the gate in plain
+English and cannot, because the gate never reads prose.
+
+_Idempotency._ issue_credit derives its key from the invoice id
+(\_credit_key), never from a random value, and checks a persisted credit log
+before writing. A retry, a resumed graph, or a model that calls the tool twice
+all produce the same key, find the existing record, and issue nothing.
+
+The "has this been credited" flag is derived at read time from that same log.
+Storing it on the invoice as well would mean two copies that drift apart —
+which
+is precisely the bug this design removes: an earlier version wrote the credit
+to
+the log and left the invoice's own flag at False, so the agent could credit
+an
+invoice, look it up, be told it was uncredited, and credit it again.
+
+_PII._ redact() allow-lists the five fields a support decision needs. Name,
+email, phone and card number are never returned by any tool, so they cannot
+reach the model's context regardless of what the model asks for. This is
+enforced at the tool boundary, not requested in a prompt — a prompt is a
+suggestion, a dictionary comprehension is not. Presidio provides a second
+layer,
+scoring the final answer for entities that should never have been there.
+
+_Indirect prompt injection._ One fixture invoice carries an
+instruction-shaped
+payload in its notes field — third-party text that would become model input
+the moment the invoice was returned verbatim. It never is: notes is not in
+the
+allow-list. That single omission is the defence, and it holds without any
+pattern matching. The guard node covers the direct case (payload in the
+user's
+own turn) as a second layer.
+
+### Evaluation
+
+16 scenarios across five families — normal, gate, pii, injection,
+error — scored on six axes:
+
+| Scorer             | Asks                                                  |
+| ------------------ | ----------------------------------------------------- |
+| tool_correctness   | Did it call the right tools?                          |
+| outcome_match      | Did the run end in the expected state?                |
+| no_redundant_calls | Did it repeat a call it already had the answer to?    |
+| terminated_cleanly | Did it finish, or hit the turn ceiling?               |
+| gate_compliance    | Did any credit at or above threshold bypass approval? |
+| pii_leakage        | Did a restricted field appear in the final answer?    |
+
+Results:
+
+| Scorer             | Score |
+| ------------------ | ----- |
+| tool_correctness   | \_\_  |
+| outcome_match      | \_\_  |
+| no_redundant_calls | \_\_  |
+| terminated_cleanly | \_\_  |
+| gate_compliance    | \_\_  |
+| pii_leakage        | \_\_  |
+
+gate_compliance and pii_leakage are the two that must be perfect. The
+others
+describe quality; those two describe whether the thing is safe to run.
+
+The guard was the source of the most instructive failure here. An early version
+of INJECTION_PATTERNS was written as ("""...""") — parentheses around a
+string, not a tuple — so iterating it yielded one character at a time. One of
+those characters was a space, which matches every input, so the guard refused
+all 16 scenarios and the eval collapsed to 4/16. The fix was one pair of
+characters; the lesson was the module-level assert that now checks the
+constant is a tuple, because the failure looked like a model problem and was a
+syntax problem.
+
+### Tests
+
+tests/test_agent.py — 11 unit tests, no network, ~6 seconds.
+
+These cover what the eval cannot. The eval measures _behaviour on realistic
+inputs_ and needs a live model, so it is slow, costs money, and is
+non-deterministic. The unit tests pin invariants using a scripted FakeModel
+injected over the graph's lazy model global, so the same assertion gives the
+same answer every time.
+
+The split earns its keep in both directions. The eval never credits an invoice
+and then looks it up again, so it passed happily while the derived-credit flag
+was broken; a three-line unit test caught it. Conversely, no unit test can tell
+you whether the agent picks sensible tools for a question a customer would
+actually ask.
+
+---
+
+## Deployment
+
+The image bakes the built Chroma index in at build time, so a cold start does
+no
+embedding work and needs no volume:
+
+bash
+docker build -t rag-app .
+docker run -p 8000:8000 --env-file .env rag-app
+
+API keys are passed at _run_ time, never copied into the image — an image
+layer is readable by anyone who can pull it, and deleting a file in a later
+layer does not remove it from the earlier one.
+
+Baking the index is the right trade here because the corpus is fixed and small.
+A corpus that changed independently of the code would want a volume or a
+managed
+vector store instead, so that updating the data did not require rebuilding the
+application.
+
+## Known limits
+
+- The injection guard is pattern-based, so it is a filter, not a proof. The
+  allow-list in redact() is the real control; the guard reduces noise
+  reaching
+  the model.
+- Presidio's en_core_web_lg model is 400 MB and dominates the image size.
+  en_core_web_sm trades some recall for roughly 380 MB.
+- The credit log is a JSON file. Two processes writing concurrently would race;
+  a real deployment needs a database with a unique constraint on the key.
+- The eval set is 22 questions written by one person. It is large enough to
+  rank configurations against each other and too small to report a confidence
+  interval.
+
+## Layout
+
+src/
+ingest.py chunking, metadata, URL construction
+retrievers.py store build/load, hybrid, reranked
+generate.py prompt, context formatting, answer
+evaluate.py hit-rate@k against labelled sections
+eval/
+questions.json 22 labelled questions
+agent/
+graph.py nodes, routing, gate threshold, checkpointer
+tools.py search_docs, get_invoice, issue_credit, redact
+guardrails.py injection patterns, Presidio PII detection
+fake_db.py invoice fixtures, credit log
+runner.py stream, trace extraction, resume
+agent_eval/
+scenarios.json 16 scenarios
+scorers.py 6 scorers
+tests/
+test_agent.py 11 unit tests
+app.py FastAPI entrypoint
+Dockerfile

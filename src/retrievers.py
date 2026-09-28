@@ -18,6 +18,10 @@ def get_store(docs=None):
         return Chroma(persist_directory=CHROMA_DIR, embedding_function=EMB)
     return Chroma.from_documents(docs, embedding=EMB, persist_directory=CHROMA_DIR)
 
+def load_store():
+    """Open an already-built index. No docs, no rebuilt"""
+    return Chroma(persist_directory=CHROMA_DIR, embedding_function=EMB)
+
 def get_hybrid(docs, store, k_each: int=10):
     bm25 = BM25Retriever.from_documents(docs)
     bm25.k = k_each
